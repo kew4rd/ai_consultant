@@ -7,6 +7,8 @@ import json
 
 
 class UserProfile(models.Model):
+    """Расширение стандартной модели User: хранит план подписки и дневной расход токенов."""
+
     PLAN_FREE = 'free'
     PLAN_PREMIUM = 'premium'
     PLAN_CHOICES = [
@@ -23,11 +25,13 @@ class UserProfile(models.Model):
     tokens_reset_date = models.DateField(default=timezone.now)
 
     def get_token_limit(self):
+        """Возвращает дневной лимит токенов в зависимости от плана пользователя."""
         if self.plan == self.PLAN_PREMIUM:
             return self.PREMIUM_DAILY_TOKENS
         return self.FREE_DAILY_TOKENS
 
     def reset_tokens_if_needed(self):
+        """Сбрасывает счётчик токенов если наступил новый день."""
         today = timezone.now().date()
         if self.tokens_reset_date < today:
             self.tokens_used_today = 0
@@ -35,10 +39,12 @@ class UserProfile(models.Model):
             self.save(update_fields=['tokens_used_today', 'tokens_reset_date'])
 
     def can_send_message(self):
+        """Проверяет, не исчерпан ли дневной лимит токенов."""
         self.reset_tokens_if_needed()
         return self.tokens_used_today < self.get_token_limit()
 
     def tokens_remaining(self):
+        """Возвращает количество токенов, оставшихся на сегодня."""
         return max(0, self.get_token_limit() - self.tokens_used_today)
 
     def __str__(self):
@@ -47,11 +53,14 @@ class UserProfile(models.Model):
 
 @receiver(post_save, sender=User)
 def create_user_profile(sender, instance, created, **kwargs):
+    """Автоматически создаёт UserProfile при регистрации нового пользователя."""
     if created:
         UserProfile.objects.create(user=instance)
 
 
 class Conversation(models.Model):
+    """Диалог пользователя с AI-консультантом. Хранит набор активных адаптеров и историю сообщений."""
+
     CONSULTANT_BUSINESS = 'business'
     CONSULTANT_LEGAL = 'legal'
     CONSULTANT_PSYCH = 'psych'
@@ -66,6 +75,7 @@ class Conversation(models.Model):
         (CONSULTANT_CUSTOM, 'Кастомный гибрид'),
     ]
 
+    # Метаданные адаптеров для отображения в интерфейсе
     ADAPTER_CATALOG = [
         {
             'key': CONSULTANT_BUSINESS,
@@ -110,10 +120,16 @@ class Conversation(models.Model):
 
     @classmethod
     def get_adapter_catalog(cls):
+        """Возвращает список всех доступных адаптеров с их метаданными."""
         return cls.ADAPTER_CATALOG
 
     @classmethod
     def normalize_adapters(cls, adapters=None, consultant=None):
+        """
+        Приводит список адаптеров к каноническому виду: убирает дубли,
+        фильтрует неизвестные ключи, возвращает хотя бы один адаптер.
+        Если adapters пуст или None — определяет набор по полю consultant.
+        """
         if isinstance(adapters, str):
             try:
                 adapters = json.loads(adapters)
@@ -137,6 +153,7 @@ class Conversation(models.Model):
 
     @classmethod
     def adapters_to_consultant(cls, adapters):
+        """Определяет тип консультанта по набору активных адаптеров."""
         normalized = cls.normalize_adapters(adapters)
         if len(normalized) == 1:
             return normalized[0]
@@ -145,9 +162,11 @@ class Conversation(models.Model):
         return cls.CONSULTANT_CUSTOM
 
     def get_selected_adapters(self):
+        """Возвращает нормализованный список активных адаптеров для этого диалога."""
         return self.normalize_adapters(self.selected_adapters, consultant=self.consultant)
 
     def set_selected_adapters(self, adapters):
+        """Сохраняет список адаптеров и синхронизирует поле consultant."""
         normalized = self.normalize_adapters(adapters, consultant=self.consultant)
         self.selected_adapters = json.dumps(normalized, ensure_ascii=False)
         self.consultant = self.adapters_to_consultant(normalized)
@@ -158,6 +177,8 @@ class Conversation(models.Model):
 
 
 class Message(models.Model):
+    """Одно сообщение в диалоге. Роль — 'user' или 'assistant'."""
+
     conversation = models.ForeignKey(
         Conversation,
         on_delete=models.CASCADE,

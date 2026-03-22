@@ -35,6 +35,7 @@ const LEGACY_CONSULTANT_TO_ADAPTERS = {
     custom: ['business'],
 };
 
+/** Читает значение cookie по имени. Используется для получения CSRF-токена. */
 function getCookie(name) {
     const cookies = document.cookie ? document.cookie.split(';') : [];
     for (const cookie of cookies) {
@@ -48,12 +49,18 @@ function getCookie(name) {
 
 const csrfToken = getCookie('csrftoken');
 
+/** Экранирует HTML-спецсимволы для безопасной вставки в DOM. */
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.appendChild(document.createTextNode(text == null ? '' : String(text)));
     return div.innerHTML;
 }
 
+/**
+ * Приводит список адаптеров к каноническому виду: принимает массив, строку или JSON.
+ * Убирает дубли и неизвестные ключи, сортирует в порядке ADAPTER_ORDER.
+ * Если список пуст — определяет адаптеры по полю consultant.
+ */
 function normalizeAdapters(adapters, consultant = 'business') {
     let parsed = adapters;
 
@@ -87,6 +94,7 @@ function normalizeAdapters(adapters, consultant = 'business') {
     return [...(LEGACY_CONSULTANT_TO_ADAPTERS[consultant] || ['business'])];
 }
 
+/** Определяет тип консультанта по набору активных адаптеров (для отправки на сервер). */
 function adaptersToConsultant(adapters) {
     const normalized = normalizeAdapters(adapters);
     if (normalized.length === 1) {
@@ -98,6 +106,7 @@ function adaptersToConsultant(adapters) {
     return 'custom';
 }
 
+/** Возвращает метаданные (иконку, название, подсказку) для отображения в шапке чата. */
 function getHeaderInfo(adapters) {
     const normalized = normalizeAdapters(adapters);
 
@@ -150,6 +159,10 @@ function updateAdapterSummary(adapters) {
     }
 }
 
+/**
+ * Устанавливает активные адаптеры: обновляет состояние кнопок и сводку.
+ * @param {boolean} silent — если true, не перерисовывает шапку чата.
+ */
 function setSelectedAdapters(adapters, silent = false) {
     selectedAdapters = normalizeAdapters(adapters);
 
@@ -166,6 +179,7 @@ function setSelectedAdapters(adapters, silent = false) {
     }
 }
 
+/** Включает или выключает адаптер по клику на кнопку. Минимум один адаптер всегда активен. */
 function toggleAdapter(adapterKey) {
     const key = String(adapterKey).trim().toLowerCase();
     if (!ADAPTER_INFO[key]) {
@@ -196,6 +210,10 @@ function autoResize(textarea) {
     textarea.style.height = Math.min(textarea.scrollHeight, 120) + 'px';
 }
 
+/**
+ * Рендерит текст ответа ассистента в HTML через marked.js.
+ * Перед парсингом экранирует < и > чтобы модель не могла внедрить HTML-теги.
+ */
 function renderAssistantMarkdown(text) {
     const safeSource = String(text || '')
         .replace(/</g, '&lt;')
@@ -211,6 +229,10 @@ function renderAssistantMarkdown(text) {
     return safeSource.replace(/\n/g, '<br>');
 }
 
+/**
+ * Добавляет сообщение в чат. Ответы ассистента рендерятся как markdown,
+ * сообщения пользователя — как plain text.
+ */
 function addMessage(text, role, scroll = true) {
     const container = document.getElementById('chat-container');
     const welcomeMsg = container.querySelector('.welcome-message');
@@ -236,6 +258,7 @@ function addMessage(text, role, scroll = true) {
     return messageDiv;
 }
 
+/** Добавляет в чат анимированный индикатор печати (три точки) пока идёт запрос. */
 function addLoadingMessage() {
     const container = document.getElementById('chat-container');
     const messageDiv = document.createElement('div');
@@ -256,6 +279,7 @@ function addLoadingMessage() {
     return messageDiv;
 }
 
+/** Обновляет счётчик и прогресс-бар расхода токенов в шапке. */
 function updateTokenDisplay(tokensRemaining) {
     tokensUsed = TOKENS_LIMIT - tokensRemaining;
     const percent = Math.min(100, Math.round((tokensUsed / TOKENS_LIMIT) * 100));
@@ -272,6 +296,7 @@ function updateTokenDisplay(tokensRemaining) {
     }
 }
 
+/** Показывает всплывающее уведомление об ошибке (исчезает через 4 секунды). */
 function showError(message) {
     const existing = document.querySelector('.error-toast');
     if (existing) {
@@ -356,6 +381,10 @@ async function loadConversation(conversationId) {
     }
 }
 
+/**
+ * Добавляет или обновляет элемент диалога в боковом списке.
+ * Если диалог уже есть — перемещает его в начало списка.
+ */
 function addConversationToSidebar(id, title, consultant, adapters) {
     const list = document.getElementById('conversations-list');
     const normalizedAdapters = normalizeAdapters(adapters, consultant);
@@ -385,6 +414,7 @@ function addConversationToSidebar(id, title, consultant, adapters) {
     list.insertBefore(item, list.firstChild);
 }
 
+/** Удаляет диалог после подтверждения. Если диалог был активным — открывает новый чат. */
 async function deleteConversation(event, conversationId) {
     event.stopPropagation();
 
@@ -421,6 +451,11 @@ async function deleteConversation(event, conversationId) {
     }
 }
 
+/**
+ * Отправляет сообщение на /stream/ и читает SSE-поток токенов.
+ * Во время генерации рендерит markdown через requestAnimationFrame (scheduleRender).
+ * По завершении потока ([DONE]) обновляет сайдбар и счётчик токенов.
+ */
 async function sendMessage() {
     if (isProcessing) {
         return;
@@ -443,8 +478,11 @@ async function sendMessage() {
     sendBtn.disabled = true;
     isProcessing = true;
 
+    let streamingDiv = null;
+    let accumulatedText = '';
+
     try {
-        const response = await fetch('/send/', {
+        const response = await fetch('/stream/', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -458,33 +496,111 @@ async function sendMessage() {
             }),
         });
 
-        loadingMsg.remove();
-        const data = await response.json();
-
-        if (data.status === 'success') {
-            addMessage(data.response, 'assistant');
-
-            const adapters = getConversationAdaptersFromData(data);
-            if (data.conversation_id !== currentConversationId) {
-                currentConversationId = data.conversation_id;
+        if (!response.ok) {
+            loadingMsg.remove();
+            try {
+                const errData = await response.json();
+                showError(errData.error || `Ошибка сервера: ${response.status}`);
+            } catch {
+                showError(`Ошибка сервера: ${response.status}`);
             }
-
-            addConversationToSidebar(
-                data.conversation_id,
-                data.conversation_title,
-                data.consultant,
-                adapters,
-            );
-            setActiveConversation(currentConversationId);
-            setSelectedAdapters(adapters, true);
-            updateChatHeader(adapters);
-            updateTokenDisplay(data.tokens_remaining);
             return;
         }
 
-        showError(data.error || 'Произошла ошибка');
-    } catch (error) {
         loadingMsg.remove();
+        streamingDiv = document.createElement('div');
+        streamingDiv.className = 'message assistant';
+        document.getElementById('chat-container').appendChild(streamingDiv);
+        scrollToBottom();
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        // Throttled рендеринг: перерисовываем markdown не чаще одного раза за кадр (60fps)
+        let renderPending = false;
+        const scheduleRender = () => {
+            if (renderPending) return;
+            renderPending = true;
+            requestAnimationFrame(() => {
+                streamingDiv.innerHTML = renderAssistantMarkdown(accumulatedText);
+                scrollToBottom();
+                renderPending = false;
+            });
+        };
+
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop();
+
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                const payload = line.slice(6);
+
+                if (payload.startsWith('[ERROR]')) {
+                    let errMsg = 'Произошла ошибка';
+                    try {
+                        errMsg = JSON.parse(payload.slice(7)).error || errMsg;
+                    } catch {}
+                    streamingDiv.remove();
+                    streamingDiv = null;
+                    showError(errMsg);
+                    break;
+                }
+
+                if (payload.startsWith('[DONE]')) {
+                    let meta = {};
+                    try { meta = JSON.parse(payload.slice(7)); } catch {}
+
+                    // Финальный рендер (на случай если последний токен ещё не отрисован)
+                    streamingDiv.innerHTML = renderAssistantMarkdown(accumulatedText);
+                    renderPending = false;
+
+                    if (meta.truncated) {
+                        const notice = document.createElement('div');
+                        notice.className = 'truncated-notice';
+                        notice.textContent = '⚠️ Ответ обрезан — модель достигла лимита длины.';
+                        streamingDiv.appendChild(notice);
+                    }
+
+                    const adapters = getConversationAdaptersFromData(meta);
+                    if (meta.conversation_id && meta.conversation_id !== currentConversationId) {
+                        currentConversationId = meta.conversation_id;
+                    }
+
+                    addConversationToSidebar(
+                        meta.conversation_id,
+                        meta.conversation_title,
+                        meta.consultant,
+                        adapters,
+                    );
+                    setActiveConversation(currentConversationId);
+                    setSelectedAdapters(adapters, true);
+                    updateChatHeader(adapters);
+                    if (meta.tokens_remaining !== undefined) {
+                        updateTokenDisplay(meta.tokens_remaining);
+                    }
+                    scrollToBottom();
+                    break;
+                }
+
+                try {
+                    const tokenData = JSON.parse(payload);
+                    const token = tokenData.token || '';
+                    if (token) {
+                        accumulatedText += token;
+                        scheduleRender();
+                    }
+                } catch {}
+            }
+        }
+    } catch (error) {
+        if (streamingDiv) streamingDiv.remove();
+        else loadingMsg.remove();
         console.error(error);
         showError('Ошибка соединения. Проверьте, что Django и сервер модели запущены.');
     } finally {

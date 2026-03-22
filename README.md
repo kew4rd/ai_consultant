@@ -1,115 +1,222 @@
-# AI Chatbot — Django + Colab / Kaggle
+# AI-консультант — Django + LoRA-адаптеры
 
-Проект с Django-интерфейсом и тремя LoRA-адаптерами: бизнес, юрист и психолог. Можно включать один адаптер или несколько одновременно, а сервер модели запускается отдельно в `colab_server.ipynb`.
+Чат-приложение с тремя специализированными AI-экспертами на базе модели **Qwen3.5-4B** с LoRA-адаптерами. Пользователь может общаться с одним экспертом или включить нескольких одновременно — модель автоматически объединяет их в гибридный режим.
 
-## Что улучшено в этой версии
+---
 
-- сохранён твой динамический hybrid для нескольких адаптеров
-- убран `csrf_exempt` с POST-эндпоинтов Django
-- фронтенд отправляет CSRF-токен автоматически
-- расход токенов считается по данным токенайзера на стороне model server
-- добавлена очистка ответа модели перед сохранением и выводом
-- хардкод токенов убран: секреты читаются из Kaggle Secrets, Colab Secrets, `.env` или системных переменных
-- `requirements.txt` теперь только для Django-приложения, без notebook-зависимостей
+## Эксперты
 
-## Репозиторий
+| Эксперт | Специализация |
+|---|---|
+| 💼 **Бизнес-консультант** | Стратегия, масштабирование, юнит-экономика, управление |
+| ⚖️ **Юридический консультант** | Договоры, риски, нормы права, защита интересов |
+| 🧠 **Предпринимательский психолог** | Стресс, выгорание, мотивация, командная динамика |
+
+Любую комбинацию из трёх адаптеров можно активировать одновременно. В гибридном режиме модель даёт единый согласованный ответ с учётом всех выбранных ролей.
+
+---
+
+## Архитектура
+
+```
+Браузер → Django (порт 8000) → Flask LLM-сервер (порт 5000)
+                                    ↓
+                             Qwen3.5-4B + LoRA-адаптеры
+```
+
+- **Django** — веб-интерфейс, авторизация, хранение диалогов, учёт токенов
+- **Flask** (`colab_server.ipynb`) — загрузка модели, генерация, стриминг ответов
+- **SSE-стриминг** — ответ отображается посимвольно в реальном времени
+- **SQLite** — хранение пользователей, диалогов и сообщений
+
+---
+
+## Требования
+
+### Django-приложение
+- Python 3.10+
+- Зависимости: `Django`, `requests`, `python-dotenv` (см. `requirements.txt`)
+
+### LLM-сервер (ноутбук)
+- GPU с 8+ ГБ VRAM (рекомендуется RTX 3070 и выше)
+- Google Colab / Kaggle (с GPU) **или** локальный запуск через Jupyter
+- Модель загружается автоматически с HuggingFace (~8 ГБ)
+
+---
+
+## Быстрый старт
+
+### Шаг 1 — Клонирование репозитория
 
 ```bash
 git clone https://github.com/Zhuzhik365/chat_bot_3adapters_dynamic_hybrid
 cd chat_bot_3adapters_dynamic_hybrid
 ```
 
-## 1. Установка Django-приложения
+### Шаг 2 — Настройка окружения Django
 
-### Windows
-
+**Windows:**
 ```bash
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-copy .env.example .env
-python manage.py migrate
-python manage.py runserver
 ```
 
-### Linux / macOS
-
+**Linux / macOS:**
 ```bash
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-python manage.py migrate
-python manage.py runserver
 ```
 
-## 2. Настройка `.env`
+### Шаг 3 — Создание `.env`
 
-Пример:
+Скопируй шаблон и заполни:
+
+```bash
+cp .env.example .env   # Linux / macOS
+copy .env.example .env  # Windows
+```
+
+Минимальная конфигурация:
 
 ```env
-DJANGO_SECRET_KEY=replace-with-your-secret-key
+DJANGO_SECRET_KEY=your-secret-key
 DJANGO_DEBUG=True
 DJANGO_ALLOWED_HOSTS=127.0.0.1,localhost
-DJANGO_CSRF_TRUSTED_ORIGINS=
 MODEL_API_URL=https://your-ngrok-url/generate
 MODEL_API_TOKEN=
-NGROK_AUTH_TOKEN=
-HUGGINGFACE_TOKEN=
-GITHUB_REPO_URL=https://github.com/Zhuzhik365/chat_bot_3adapters_dynamic_hybrid
 ```
 
-Главное:
-- `MODEL_API_URL` или `COLAB_API_URL` — адрес model server c `/generate`
-- `MODEL_API_TOKEN` — необязательный общий секрет между Django и notebook
-- `DJANGO_SECRET_KEY` — секрет Django
-- `DJANGO_CSRF_TRUSTED_ORIGINS` — нужен, если фронт будет идти через другой домен
-
-Сгенерировать Django secret key:
+Сгенерировать `DJANGO_SECRET_KEY`:
 
 ```bash
 python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
 ```
 
-## 3. Запуск `colab_server.ipynb`
+Описание переменных:
 
-Notebook сам ставит **свои** зависимости и не использует `requirements.txt`. Это специально, чтобы зависимости Django и ноутбука не мешали друг другу на macOS / Linux / Windows.
+| Переменная | Назначение |
+|---|---|
+| `DJANGO_SECRET_KEY` | Секретный ключ Django (обязательно) |
+| `DJANGO_DEBUG` | Режим отладки (`True` / `False`) |
+| `DJANGO_ALLOWED_HOSTS` | Разрешённые хосты через запятую |
+| `DJANGO_CSRF_TRUSTED_ORIGINS` | Нужен при работе через внешний домен |
+| `MODEL_API_URL` | URL Flask-сервера с `/generate` на конце |
+| `MODEL_API_TOKEN` | Общий секрет между Django и ноутбуком (необязательно) |
 
-Что нужно сделать:
-1. открыть `colab_server.ipynb`
-2. включить GPU
-3. задать секреты одним из способов:
-   - Kaggle Secrets
-   - Colab Secrets
-   - `.env`
-   - системные переменные окружения
-4. запустить все ячейки
-5. взять ngrok URL и вставить его в `.env` как `MODEL_API_URL`
+### Шаг 4 — Запуск LLM-сервера
 
-Поддерживаемые секреты:
-- `NGROK_AUTH_TOKEN` или `NGROK_TOKEN`
-- `HUGGINGFACE_TOKEN`
-- `MODEL_API_TOKEN`
-- `GITHUB_REPO_URL`
+Открой `colab_server.ipynb` и выполни все ячейки по порядку.
 
-## 4. Защита POST-запросов
+#### Вариант A: Google Colab / Kaggle (рекомендуется)
 
-В этой версии:
-- POST-запросы к Django больше не `csrf_exempt`
-- фронтенд использует CSRF-cookie Django
-- model server может дополнительно проверять `MODEL_API_TOKEN`, если ты его задашь
+1. Загрузи ноутбук в Colab или Kaggle
+2. Включи GPU-ускоритель
+3. Добавь секреты через встроенный менеджер:
+   - Colab: панель слева → иконка ключа 🔑 → **Secrets**
+   - Kaggle: **Add-ons → Secrets**
 
-## 5. Подсчёт токенов
+   | Секрет | Описание |
+   |---|---|
+   | `NGROK_AUTH_TOKEN` | Токен с [dashboard.ngrok.com](https://dashboard.ngrok.com) |
+   | `MODEL_API_TOKEN` | Тот же токен что в `.env` (необязательно) |
+   | `HUGGINGFACE_TOKEN` | Нужен только для приватных моделей |
 
-Django теперь берёт `total_tokens`, `prompt_tokens` и `response_tokens` из ответа notebook. Если notebook их не вернул, используется мягкий fallback-расчёт.
+4. Запусти все ячейки — в конце появится ngrok URL вида `https://xxxx.ngrok-free.app`
+5. Скопируй URL и вставь в `.env` как `MODEL_API_URL=https://xxxx.ngrok-free.app/generate`
 
-## 6. Структура проекта
+#### Вариант B: Локальный запуск (RTX 8+ ГБ)
 
-```text
-chat/
-chatbot_project/
-colab_server.ipynb
-requirements.txt
-.env.example
-README.md
+Замени последнюю ячейку ноутбука на:
+
+```python
+app.run(host="0.0.0.0", port=5000, threaded=False)
 ```
+
+Установи зависимости ноутбука и запусти:
+
+```bash
+pip install jupyter transformers peft accelerate flask pyngrok sentencepiece
+jupyter notebook colab_server.ipynb
+```
+
+В `.env` укажи:
+
+```env
+MODEL_API_URL=http://127.0.0.1:5000/generate
+```
+
+### Шаг 5 — Запуск Django
+
+```bash
+python manage.py migrate
+python manage.py runserver
+```
+
+Открывай **http://127.0.0.1:8000**, регистрируйся и начинай общение.
+
+> **Важно:** LLM-сервер должен быть запущен до первого сообщения в чате.
+
+---
+
+## Лимиты токенов
+
+| План | Токенов в день | Токенов на ответ |
+|---|---|---|
+| Free | 10 000 | 1 000 |
+| Premium | 100 000 | 1 000 |
+
+Счётчик обнуляется каждый день в полночь. Если ответ модели был обрезан из-за лимита длины — под сообщением появится предупреждение.
+
+---
+
+## Структура проекта
+
+```
+chat_bot_3adapters_dynamic_hybrid/
+├── adapters/
+│   ├── business_adapter/   # LoRA-веса для бизнес-консультанта
+│   ├── laws_adapter/       # LoRA-веса для юридического консультанта
+│   └── psych_adapter/      # LoRA-веса для психолога
+├── chat/
+│   ├── migrations/
+│   ├── static/chat/
+│   │   ├── css/style.css
+│   │   └── js/chat.js      # Логика чата и SSE-стриминг
+│   ├── templates/chat/     # HTML-шаблоны
+│   ├── models.py           # UserProfile, Conversation, Message
+│   ├── views.py            # Django-вью, включая /stream/ эндпоинт
+│   └── urls.py
+├── chatbot_project/
+│   ├── settings.py
+│   └── urls.py
+├── colab_server.ipynb      # Flask LLM-сервер с /generate и /generate_stream
+├── requirements.txt        # Зависимости Django-приложения
+├── .env.example
+└── manage.py
+```
+
+---
+
+## API Flask-сервера
+
+| Метод | Эндпоинт | Описание |
+|---|---|---|
+| POST | `/generate` | Синхронная генерация (весь ответ одним JSON) |
+| POST | `/generate_stream` | Стриминг токенов через SSE |
+| GET | `/health` | Статус сервера и список адаптеров |
+| GET | `/` | Базовая информация об API |
+
+Формат запроса к `/generate` и `/generate_stream`:
+
+```json
+{
+  "message": "Как открыть ООО?",
+  "history": [{"role": "user", "content": "..."}, {"role": "assistant", "content": "..."}],
+  "consultant": "legal",
+  "adapters": ["legal"]
+}
+```
+
+Опциональная авторизация: заголовок `X-Model-Api-Key: <MODEL_API_TOKEN>`.
