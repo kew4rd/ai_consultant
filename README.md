@@ -49,7 +49,7 @@
 ### Шаг 1 — Клонирование репозитория
 
 ```bash
-git clone https://github.com/Zhuzhik365/chat_bot_3adapters_dynamic_hybrid
+git clone https://github.com/kew4rd/ai_consultant
 cd chat_bot_3adapters_dynamic_hybrid
 ```
 
